@@ -1,0 +1,220 @@
+---
+title: "Assignment 3 - Part 2 - Diagnosing Schizophrenia from Voice"
+author: "Anita Kurm"
+date: "October 17, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Assignment 3 - Diagnosing schizophrenia from voice
+
+In the previous part of the assignment you generated a bunch of "features", that is, of quantitative descriptors of voice in schizophrenia, focusing on pitch.
+In the course of this assignment we will use them to try to automatically diagnose schizophrenia from voice only, that is, relying on the set of features you produced last time, we will try to produce an automated classifier.
+
+```{r}
+#set working directory
+setwd("C:/Users/Samsung/Desktop/expmeth/Assignment-6")
+
+#libraries
+library(ggplot2)
+library(dplyr)
+library(lme4)
+library(MuMIn)
+library(lmerTest)
+library(gstat)
+library(stringr)
+library(plyr)
+library(caret)
+library(modelr)
+library(ModelMetrics)
+library(Metrics)
+library(tidyverse)
+library(simr)
+library(pacman)
+library(crqa)
+library(gtools)
+library(e1071)
+library(pROC)
+
+#read the emergency output datafile, since theres a ot of NAs in another one.
+data<-read.csv("final_rqa.csv",header = T) #better use this one...
+
+```
+
+
+### Question 1: Can you diagnose schizophrenia from pitch range only? If so, how well?
+
+Build a logistic regression to see whether you can diagnose schizophrenia from pitch range only.
+
+Calculate the different performance measures (accuracy, sensitivity, specificity, PPV, NPV, ROC curve) on a logistic regression using the full dataset. Don't forget the random effects!
+
+Then cross-validate the logistic regression and re-calculate performance on the testing folds. N.B. The cross-validation functions you already have should be tweaked: you need to calculate these new performance measures.
+
+N.B. the predict() function generates log odds (the full scale between minus and plus infinity). Log odds > 0 indicates a choice of 1, below a choice of 0.
+N.B. you need to decide whether calculate performance on each single test fold or save all the prediction for test folds in one datase, so to calculate overall performance.
+N.B. Now you have two levels of structure: subject and study. Should this impact your cross-validation?
+
+```{r}
+data$participant=as.factor(data$participant)
+regression <- glmer(diagnosis~range+(1|participant)+(1|study), data = data, family = binomial())
+summary(regression)
+
+#create a coumn with predictions
+data$PredictionsPerc<- predict(regression)
+
+data$Predictions[data$PredictionsPerc>0]="control"
+data$Predictions[data$PredictionsPerc<=0]="schizophrenia"
+
+data$Predictions=as.factor(data$Predictions)
+confusion<- caret::confusionMatrix(data = data$Predictions,reference = data$diagnosis, positive ="schizophrenia") #I don't know what should be the positive class. 
+confusion 
+
+caret::sensitivity(data = data$Predictions, reference = data$diagnosis, positive = "schizophrenia")  #0.7098
+caret::specificity(data = data$Predictions, reference = data$diagnosis, negative = "control") #0.1996
+#make clear what positive and negative classifiers mean
+
+
+#rocCurve
+rocCurve <- roc(response = data$diagnosis, predictor = data$PredictionsPerc)
+rocCurve
+#Area under the curve: 0.5752 
+
+curveplot <- plot(rocCurve, legacy.aex = TRUE)
+
+
+########### CROSS-VALIDATION ################
+
+#create folds
+Folds<- createFolds(unique(data$participant),k=5)
+Folds
+
+#Preperations for loop - result lists and n reset
+#accuracy, sensitivity, specificity, PPV, NPV, ROC curve
+
+#Train variables
+trainSens = NULL
+trainSpec = NULL
+trainACC = NULL
+trainPPV = NULL
+trainNPV = NULL
+trainKappa = NULL
+
+trainAUC = NULL
+
+#Test variables
+testSens = NULL
+testSpec = NULL
+testACC = NULL
+testPPV = NULL
+testNPV = NULL
+testKappa = NULL
+
+testAUC = NULL
+n=1
+
+for(i in Folds){
+  #Make a test dataset with one fold
+  test<-subset(data, participant %in% i)
+  #Make a training dataset with all other folds
+  train<- subset(data, !participant %in% i)
+
+  #Make a model on the training dataset
+  themodel <- glmer(diagnosis ~ 1 + range + (1|study)+(1|participant), train, family = "binomial")
+  
+  #make predictions, train the model
+  train$PredictionsPerc <- predict(themodel, train)
+  train$Predictions[train$PredictionsPerc>0]="control"
+  train$Predictions[train$PredictionsPerc<=0]="schizophrenia"
+  
+  #confusion matrix
+  trainpred<- caret::confusionMatrix(data = train$Predictions,reference = train$diagnosis, positive ="schizophrenia")
+  
+  #Check error between fit of training data and actual training data
+  trainSens[n] = caret::sensitivity(data = train$Predictions, reference = train$diagnosis, positive = "schizophrenia")
+  trainSpec[n] = caret::specificity(data = train$Predictions, reference = train$diagnosis, negative = "control")
+  trainACC[n] = trainpred$overall[1]
+  trainPPV[n] = trainpred$byClass[3]
+  trainNPV[n] = trainpred$byClass[4]
+  trainKappa[n] = trainpred$overall[2]
+  
+  #Get area under curve from rocCurve 
+  trainRocCurve <- roc(response = train$diagnosis, predictor = train$PredictionsPerc)
+  trainRocCurve
+  trainAUC[n] = trainRocCurve$auc
+  
+  #Save plot
+  RocplotSave <- ggsave("Train_RocplotLoop.pdf", plot(trainRocCurve, legacy.aex = TRUE), device = "pdf",   path ="C:/Users/Samsung/Desktop/expmeth/Assignment-6/roccurve plots", limitsize = FALSE)
+  
+  TrainCross <- data.frame(trainSens, trainSpec, trainPPV, trainNPV, trainACC, trainKappa, trainAUC)
+  
+  #make predictions, test the model
+  test$PredictionsPerc <- predict(themodel, test)
+  test$Predictions[test$PredictionsPerc>0]="control"
+  train$Predictions[test$PredictionsPerc<=0]="schizophrenia"
+  
+  #confusion matrix
+  testpred<- caret::confusionMatrix(data = test$Predictions,reference = test$diagnosis, positive ="schizophrenia")
+  
+  #Check error between predicitions for test data and actual test data
+  #rmse_test[n] = Metrics :: rmse(dtest_temp$diagnosis, predict(themodel, dtest_temp, allow.new.levels=T))
+  testSens[n] = testpred$byClass[1]
+  testSpec[n] = testpred$byClass[2]
+  testPPV[n] = testpred$byClass[3]
+  testNPV[n] = testpred$byClass[4]
+  testACC[n] = testpred$overall[1]
+  testKappa[n] = testpred$overall[2]
+  
+  #Get area under curve from rocCurve 
+  testRocCurve <- roc(response = test$diagnosis, predictor = test$PredictionsPerc)
+  testRocCurve
+  
+  testAUC[n] = testRocCurve$auc
+  
+  #Save plot
+  RocplotSavetest <- ggsave("Test_RocplotLoop.pdf", plot(testRocCurve, legacy.aex = TRUE), device = "pdf",   path ="C:/Users/Samsung/Desktop/expmeth/Assignment-6/roccurve plots", limitsize = FALSE)
+  
+  TestCross <- data.frame(testSens, testSpec, testPPV, testNPV, testACC, testKappa, testAUC)
+  
+  #Loop end and n+1
+  n=n+1
+  
+}
+  CrossVal <- data.frame(TrainCross, TestCross)
+  #Tidy up data
+  CrossVal2 <- dplyr::select(CrossVal, trainSens:trainAUC) %>%
+  gather("Train", "Train Values")
+  
+  #Tidy up data
+  CrossVal3 <- dplyr::select(CrossVal, testSens:testAUC) %>%
+  gather("Test", "Test Values")
+  #Merge 
+  CrossValM <- bind_cols(CrossVal2, CrossVal3)
+```
+
+
+### Question 2 - Which single acoustic predictor is the best predictor of diagnosis?
+
+### Question 3 - Which combination of acoustic predictors is best for diagnosing schizophrenia?
+
+Now it's time to go wild! Use all (voice-related) variables and interactions you can think of. Compare models and select the best performing model you can find.
+
+Remember:
+- Out-of-sample error crucial to build the best model!
+- After choosing the model, send Celine and Riccardo the code of your model
+
+### Question 4: Properly report the results
+
+METHODS SECTION: how did you analyse the data? That is, how did you extract the data, designed the models and compared their performance?
+
+RESULTS SECTION: can you diagnose schizophrenia based on voice? which features are used? Comment on the difference between the different performance measures.
+
+### Bonus question 5
+
+You have some additional bonus data involving speech rate, pauses, etc. Include them in your analysis. Do they improve classification?
+
+### Bonus question 6
+
+Logistic regression is only one of many classification algorithms. Try using others and compare performance. Some examples: Discriminant Function, Random Forest, Support Vector Machine, etc. The package caret provides them.
