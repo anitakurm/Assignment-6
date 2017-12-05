@@ -83,10 +83,119 @@ rocCurve
 #Area under the curve: 0.5752 
 
 curveplot <- plot(rocCurve, legacy.aex = TRUE)
+#Find area under curve
+auc(rocCurve)
+#Find confidence intervals
+ci (rocCurve)
 
 
 ########### CROSS-VALIDATION ################
 
+#Create list of the models to test
+Ms = c("diagnosis ~ mean + (1 |study)", 
+       "diagnosis ~ stdDev + (1 |study)",
+       "diagnosis ~ range + (1 |study)",
+       "diagnosis ~ median + (1 |study)",
+       "diagnosis ~ InterquartileRange + (1 |study)",
+       "diagnosis ~ MeanAbsoluteDeviation + (1 |study)",
+       "diagnosis ~ coefficientOfVariation + (1 |study)",
+       "diagnosis ~ rqa_REC + (1 |study)",
+       "diagnosis ~ rqa_DET + (1 |study)",
+       "diagnosis ~ rqa_maxL + (1 |study)",
+       "diagnosis ~ rqa_L + (1 |study)",
+       "diagnosis ~ rqa_ENTR + (1 |study)",
+       "diagnosis ~ rqa_TT + (1 |study)",
+       "diagnosis ~ rqa_LAM + (1 |study)"
+       
+       )
+
+#Create lists for results
+SCORES = as.data.frame(NULL)
+
+#Create ID as numbers for use in folding
+data$fold_id = as.numeric(data$participant)
+
+#Scale continous variables to make convering easier
+data$mean = scale(data$mean)
+data$stdDev = scale(data$stdDev)
+data$range = scale(data$range)
+data$median = scale(data$median)
+data$InterquartileRange = scale(data$InterquartileRange)
+data$MeanAbsoluteDeviation = scale(data$MeanAbsoluteDeviation)
+data$coefficientOfVariation = scale(data$coefficientOfVariation)
+data$rqa_REC = scale(data$rqa_REC)
+data$rqa_DET = scale(data$rqa_DET)
+data$rqa_maxL = scale(data$rqa_maxL)
+data$rqa_L = scale(data$rqa_L)
+data$rqa_ENTR = scale(data$rqa_ENTR)
+data$rqa_LAM = scale(data$rqa_LAM)
+data$rqa_TT = scale(data$rqa_TT)
+
+#Run Loop for all models
+for (M in Ms) {
+  
+#Create folds
+Folds = createFolds(unique(data$fold_id), 5)
+
+
+#Preperations for loop - result lists and n reset
+AUCl = NULL
+CIl = NULL
+Accl = NULL
+Sensitivityl = NULL
+Specificityl = NULL
+PPVl = NULL
+NPVl = NULL
+
+n=1
+
+for (i in Folds) {
+  #Make a test dataset with one fold
+  dtest_temp = subset(data, fold_id %in% i)
+  
+  #Make a training dataset with all other folds
+  dtrain_temp = subset(data, !fold_id %in% i)
+  
+  #Make a model on the training dataset
+  model_temp = glmer(M, dtrain_temp, family = "binomial")
+  
+  ####Create confusion matrix
+  #Create predictions for model
+  dtest_temp$PredictionsPerc=predict(model_temp, dtest_temp, allow.new.levels=T)
+  #Define what is control and what is schizo  
+  dtest_temp$Predictions[dtest_temp$PredictionsPerc>0]="control"
+  dtest_temp$Predictions[dtest_temp$PredictionsPerc<=0]="schizophrenia"
+  #Create a confusion matrix
+  ScoreMatrix = caret::confusionMatrix(data = dtest_temp$Predictions,reference = dtest_temp$diagnosis, positive ="schizophrenia") 
+  
+  #Get data from confusion matric
+  Accl [n] = ScoreMatrix$overall[1]
+  Sensitivityl[n] = ScoreMatrix$byClass[1]
+  Specificityl [n] = ScoreMatrix$byClass[2]
+  PPVl [n] = ScoreMatrix$byClass[3]
+  NPVl [n] = ScoreMatrix$byClass[4]
+
+  ####Create a ROC Curve
+  rocCurve <- roc(response = dtest_temp$diagnosis,   predictor = dtest_temp$PredictionsPerc)
+    #plot(rocCurve, legacy.axes = TRUE) 
+  #Find area under curve
+  AUCl[n] = auc(rocCurve)
+  #Find confidence intervals
+  CIl[n] = ci(rocCurve)
+  
+    #Loop end and n+1
+  n=n+1
+  }
+
+#Create row with results from model
+NewRow = data.frame(Model = M, AUC = mean(AUCl), CI = mean(CIl), Acc = mean(Accl), Sens = mean(Sensitivityl), Spec = mean(Specificityl), PPV = mean(PPVl), NPV = mean(NPVl))
+
+#Add to final dataframe with all models
+SCORES = rbind(SCORES, NewRow)
+}
+
+
+#########################The first version of the loop 
 #create folds
 Folds<- createFolds(unique(data$participant),k=5)
 Folds
