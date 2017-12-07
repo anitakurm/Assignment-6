@@ -19,25 +19,13 @@ In the course of this assignment we will use them to try to automatically diagno
 setwd("C:/Users/Samsung/Desktop/expmeth/Assignment-6")
 
 #libraries
-library(ggplot2)
-library(dplyr)
 library(lme4)
+library(ggplot2)
 library(MuMIn)
-library(lmerTest)
-library(gstat)
-library(stringr)
-library(plyr)
 library(caret)
-library(modelr)
-library(ModelMetrics)
-library(Metrics)
-library(tidyverse)
-library(simr)
-library(pacman)
-library(crqa)
-library(gtools)
-library(e1071)
 library(pROC)
+library(magrittr)
+
 
 #read the emergency output datafile, since theres a ot of NAs in another one.
 data<-read.csv("final_rqa.csv",header = T) #better use this one...
@@ -59,8 +47,9 @@ N.B. Now you have two levels of structure: subject and study. Should this impact
 
 ```{r}
 data$participant=as.factor(data$participant)
-regression <- glmer(diagnosis~range+(1|participant)+(1|study), data = data, family = binomial())
+regression <- glmer(diagnosis~range+(1|study), data = data, family = binomial())
 summary(regression)
+
 
 #create a coumn with predictions
 data$PredictionsPerc<- predict(regression)
@@ -83,6 +72,9 @@ rocCurve
 #Area under the curve: 0.5752 
 
 curveplot <- plot(rocCurve, legacy.aex = TRUE)
+curveplot
+plot(curveplot)
+
 #Find area under curve
 auc(rocCurve)
 #Find confidence intervals
@@ -195,112 +187,7 @@ SCORES = rbind(SCORES, NewRow)
 }
 
 
-#########################The first version of the loop 
-#create folds
-Folds<- createFolds(unique(data$participant),k=5)
-Folds
 
-#Preperations for loop - result lists and n reset
-#accuracy, sensitivity, specificity, PPV, NPV, ROC curve
-
-#Train variables
-trainSens = NULL
-trainSpec = NULL
-trainACC = NULL
-trainPPV = NULL
-trainNPV = NULL
-trainKappa = NULL
-
-trainAUC = NULL
-
-#Test variables
-testSens = NULL
-testSpec = NULL
-testACC = NULL
-testPPV = NULL
-testNPV = NULL
-testKappa = NULL
-
-testAUC = NULL
-n=1
-
-for(i in Folds){
-  #Make a test dataset with one fold
-  test<-subset(data, participant %in% i)
-  #Make a training dataset with all other folds
-  train<- subset(data, !participant %in% i)
-
-  #Make a model on the training dataset
-  themodel <- glmer(diagnosis ~ 1 + range + (1|study)+(1|participant), train, family = "binomial")
-  
-  #make predictions, train the model
-  train$PredictionsPerc <- predict(themodel, train)
-  train$Predictions[train$PredictionsPerc>0]="control"
-  train$Predictions[train$PredictionsPerc<=0]="schizophrenia"
-  
-  #confusion matrix
-  trainpred<- caret::confusionMatrix(data = train$Predictions,reference = train$diagnosis, positive ="schizophrenia")
-  
-  #Check error between fit of training data and actual training data
-  trainSens[n] = caret::sensitivity(data = train$Predictions, reference = train$diagnosis, positive = "schizophrenia")
-  trainSpec[n] = caret::specificity(data = train$Predictions, reference = train$diagnosis, negative = "control")
-  trainACC[n] = trainpred$overall[1]
-  trainPPV[n] = trainpred$byClass[3]
-  trainNPV[n] = trainpred$byClass[4]
-  trainKappa[n] = trainpred$overall[2]
-  
-  #Get area under curve from rocCurve 
-  trainRocCurve <- roc(response = train$diagnosis, predictor = train$PredictionsPerc)
-  trainRocCurve
-  trainAUC[n] = trainRocCurve$auc
-  
-  #Save plot
-  RocplotSave <- ggsave("Train_RocplotLoop.pdf", plot(trainRocCurve, legacy.aex = TRUE), device = "pdf",   path ="C:/Users/Samsung/Desktop/expmeth/Assignment-6/roccurve plots", limitsize = FALSE)
-  
-  TrainCross <- data.frame(trainSens, trainSpec, trainPPV, trainNPV, trainACC, trainKappa, trainAUC)
-  
-  #make predictions, test the model
-  test$PredictionsPerc <- predict(themodel, test)
-  test$Predictions[test$PredictionsPerc>0]="control"
-  train$Predictions[test$PredictionsPerc<=0]="schizophrenia"
-  
-  #confusion matrix
-  testpred<- caret::confusionMatrix(data = test$Predictions,reference = test$diagnosis, positive ="schizophrenia")
-  
-  #Check error between predicitions for test data and actual test data
-  #rmse_test[n] = Metrics :: rmse(dtest_temp$diagnosis, predict(themodel, dtest_temp, allow.new.levels=T))
-  testSens[n] = testpred$byClass[1]
-  testSpec[n] = testpred$byClass[2]
-  testPPV[n] = testpred$byClass[3]
-  testNPV[n] = testpred$byClass[4]
-  testACC[n] = testpred$overall[1]
-  testKappa[n] = testpred$overall[2]
-  
-  #Get area under curve from rocCurve 
-  testRocCurve <- roc(response = test$diagnosis, predictor = test$PredictionsPerc)
-  testRocCurve
-  
-  testAUC[n] = testRocCurve$auc
-  
-  #Save plot
-  RocplotSavetest <- ggsave("Test_RocplotLoop.pdf", plot(testRocCurve, legacy.aex = TRUE), device = "pdf",   path ="C:/Users/Samsung/Desktop/expmeth/Assignment-6/roccurve plots", limitsize = FALSE)
-  
-  TestCross <- data.frame(testSens, testSpec, testPPV, testNPV, testACC, testKappa, testAUC)
-  
-  #Loop end and n+1
-  n=n+1
-  
-}
-  CrossVal <- data.frame(TrainCross, TestCross)
-  #Tidy up data
-  CrossVal2 <- dplyr::select(CrossVal, trainSens:trainAUC) %>%
-  gather("Train", "Train Values")
-  
-  #Tidy up data
-  CrossVal3 <- dplyr::select(CrossVal, testSens:testAUC) %>%
-  gather("Test", "Test Values")
-  #Merge 
-  CrossValM <- bind_cols(CrossVal2, CrossVal3)
 ```
 
 
@@ -313,6 +200,91 @@ Now it's time to go wild! Use all (voice-related) variables and interactions you
 Remember:
 - Out-of-sample error crucial to build the best model!
 - After choosing the model, send Celine and Riccardo the code of your model
+```{r}
+#My models
+Ms = c("diagnosis ~ coefficientOfVariation +median+rqa_LAM +rqa_DET +rqa_REC + (1 |study)",
+       "diagnosis ~ trial +mean+stdDev+ range+median+MeanAbsoluteDeviation+ rqa_LAM +rqa_DET +rqa_REC + (1 |study)",
+       "diagnosis ~ coefficientOfVariation +mean+rqa_LAM +range +rqa_REC + (1 |study)",
+       "diagnosis ~ stdDev + mean+ range+ median+(1 |study)",
+       "diagnosis ~ median +  mean*coefficientOfVariation+(1 |study)",
+       "diagnosis ~ rqa_REC +rqa_DET + rqa_maxL + rqa_ENTR +rqa_TT +rqa_LAM+ (1 |participant)",
+       "diagnosis ~ coefficientOfVariation +rqa_DET + rqa_maxL + rqa_ENTR +rqa_TT +rqa_LAM+ (1 |participant)"
+       )
+
+#Create lists for results
+SCORES2 = as.data.frame(NULL)
+
+#Create ID as numbers for use in folding
+data$fold_id = as.numeric(data$participant)
+
+
+#Run Loop for all models
+for (M in Ms) {
+  
+#Create folds
+Folds = createFolds(unique(data$fold_id), 5)
+
+
+#Preperations for loop - result lists and n reset
+AUCl = NULL
+CIl = NULL
+Accl = NULL
+Sensitivityl = NULL
+Specificityl = NULL
+PPVl = NULL
+NPVl = NULL
+
+n=1
+
+for (i in Folds) {
+  #Make a test dataset with one fold
+  dtest_temp = subset(data, fold_id %in% i)
+  
+  #Make a training dataset with all other folds
+  dtrain_temp = subset(data, !fold_id %in% i)
+  
+  #Make a model on the training dataset
+  model_temp = glmer(M, dtrain_temp, family = "binomial")
+  
+  ####Create confusion matrix
+  #Create predictions for model
+  dtest_temp$PredictionsPerc=predict(model_temp, dtest_temp, allow.new.levels=T)
+  #Define what is control and what is schizo  
+  dtest_temp$Predictions[dtest_temp$PredictionsPerc>0]="control"
+  dtest_temp$Predictions[dtest_temp$PredictionsPerc<=0]="schizophrenia"
+  #Create a confusion matrix
+  ScoreMatrix = caret::confusionMatrix(data = dtest_temp$Predictions,reference = dtest_temp$diagnosis, positive ="schizophrenia") 
+  
+  #Get data from confusion matric
+  Accl [n] = ScoreMatrix$overall[1]
+  Sensitivityl[n] = ScoreMatrix$byClass[1]
+  Specificityl [n] = ScoreMatrix$byClass[2]
+  PPVl [n] = ScoreMatrix$byClass[3]
+  NPVl [n] = ScoreMatrix$byClass[4]
+
+  ####Create a ROC Curve
+  rocCurve <- roc(response = dtest_temp$diagnosis,   predictor = dtest_temp$PredictionsPerc)
+    #plot(rocCurve, legacy.axes = TRUE) 
+  #Find area under curve
+  AUCl[n] = auc(rocCurve)
+  #Find confidence intervals
+  CIl[n] = ci(rocCurve)
+  
+    #Loop end and n+1
+  n=n+1
+  }
+
+#Create row with results from model
+NewRow = data.frame(Model = M, AUC = mean(AUCl), CI = mean(CIl), Acc = mean(Accl), Sens = mean(Sensitivityl), Spec = mean(Specificityl), PPV = mean(PPVl), NPV = mean(NPVl))
+
+#Add to final dataframe with all models
+SCORES2 = rbind(SCORES2, NewRow)
+}
+
+
+
+```
+
 
 ### Question 4: Properly report the results
 
